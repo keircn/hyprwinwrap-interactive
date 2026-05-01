@@ -15,8 +15,9 @@
 #include <hyprland/src/desktop/view/Subsurface.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/managers/LayoutManager.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/SharedDefs.hpp>
@@ -34,6 +35,11 @@ inline CFunctionHook* subsurfaceHook = nullptr;
 inline CFunctionHook* commitHook     = nullptr;
 typedef void (*origCommitSubsurface)(Desktop::View::CSubsurface* thisptr);
 typedef void (*origCommitWindow)(Desktop::View::CWindow* thisptr);
+
+inline CHyprSignalListener openWindowListener;
+inline CHyprSignalListener closeWindowListener;
+inline CHyprSignalListener renderListener;
+inline CHyprSignalListener configReloadedListener;
 
 std::vector<PHLWINDOWREF> bgWindows;
 std::map<PHLWINDOW, bool> interactableStates;
@@ -80,7 +86,7 @@ void onNewWindow(PHLWINDOW pWindow) {
         return;
 
     if (!pWindow->m_isFloating)
-        g_pLayoutManager->getCurrentLayout()->changeWindowFloatingMode(pWindow);
+        g_layoutManager->changeFloatingMode(pWindow->m_target);
 
     float sx = 100.f, sy = 100.f, px = 0.f, py = 0.f;
 
@@ -242,7 +248,7 @@ SDispatchResult dispatchToggle(std::string args) {
     if (toggledCount > 0 && !bgWindows.empty()) {
         const auto firstBg = bgWindows.front().lock();
         if (firstBg && isWindowInteractable(firstBg)) {
-            Desktop::focusState()->fullWindowFocus(firstBg);
+            Desktop::focusState()->fullWindowFocus(firstBg, Desktop::FOCUS_REASON_KEYBIND);
         } else {
             g_pInputManager->refocus();
         }
@@ -271,7 +277,7 @@ SDispatchResult dispatchShow(std::string args) {
     if (!bgWindows.empty()) {
         const auto firstBg = bgWindows.front().lock();
         if (firstBg)
-            Desktop::focusState()->fullWindowFocus(firstBg);
+            Desktop::focusState()->fullWindowFocus(firstBg, Desktop::FOCUS_REASON_KEYBIND);
     }
 
     return SDispatchResult{};
@@ -306,10 +312,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     // clang-format off
-    static auto P  = HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow",     [&](void* self, SCallbackInfo& info, std::any data) { onNewWindow(std::any_cast<PHLWINDOW>(data)); });
-    static auto P2 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "closeWindow",    [&](void* self, SCallbackInfo& info, std::any data) { onCloseWindow(std::any_cast<PHLWINDOW>(data)); });
-    static auto P3 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "render",         [&](void* self, SCallbackInfo& info, std::any data) { onRenderStage(std::any_cast<eRenderStage>(data)); });
-    static auto P4 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "configReloaded", [&](void* self, SCallbackInfo& info, std::any data) { onConfigReloaded(); });
+    openWindowListener     = Event::bus()->m_events.window.open.listen([](PHLWINDOW window) { onNewWindow(window); });
+    closeWindowListener    = Event::bus()->m_events.window.close.listen([](PHLWINDOW window) { onCloseWindow(window); });
+    renderListener         = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) { onRenderStage(stage); });
+    configReloadedListener = Event::bus()->m_events.config.reloaded.listen([]() { onConfigReloaded(); });
     // clang-format on
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprwinwrap:toggle", dispatchToggle);

@@ -27,7 +27,7 @@ Toggle, show, or hide interactivity with background windows:
 
 ```bash
 # Toggle interactivity (recommended - bind to a key)
-hyprctl dispatch hyprwinwrap:toggle
+{{< hdt "hyprctl" >}} dispatch hyprwinwrap:toggle
 
 # Explicit show/hide
 hyprctl dispatch hyprwinwrap:show
