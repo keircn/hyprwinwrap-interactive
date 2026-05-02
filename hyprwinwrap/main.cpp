@@ -234,7 +234,7 @@ void adoptExistingWindows() {
 }
 
 void onRenderStage(eRenderStage stage) {
-    if (stage != RENDER_PRE_WINDOWS)
+    if (stage != RENDER_PRE_WINDOWS && stage != RENDER_LAST_MOMENT)
         return;
 
     cleanupExpiredWindows();
@@ -248,10 +248,15 @@ void onRenderStage(eRenderStage stage) {
             continue;
 
         const auto MON = bgw->m_monitor.lock();
-        if (MON && !isWindowInteractable(bgw)) {
-            const CBox fullMonitorBox = MON->logicalBox();
-            setWindowGeometry(bgw, fullMonitorBox.pos(), fullMonitorBox.size());
-        }
+        if (!MON)
+            continue;
+
+        const bool interactable = isWindowInteractable(bgw);
+        if ((stage == RENDER_PRE_WINDOWS && interactable) || (stage == RENDER_LAST_MOMENT && !interactable))
+            continue;
+
+        const CBox fullMonitorBox = MON->logicalBox();
+        setWindowGeometry(bgw, fullMonitorBox.pos(), fullMonitorBox.size());
 
         // cant use setHidden cuz that sends suspended and shit too that would be laggy
         const bool wasHidden = bgw->m_hidden;
