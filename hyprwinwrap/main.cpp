@@ -63,14 +63,12 @@ static void cleanupExpiredWindows() {
     std::erase_if(bgWindows, [](const auto& ref) { return ref.expired(); });
 }
 
-void onNewWindow(PHLWINDOW pWindow) {
+static bool windowMatchesConfig(const PHLWINDOW& pWindow) {
+    if (!pWindow)
+        return false;
+
     static auto* const PCLASS = (Hyprlang::STRING const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprwinwrap:class")->getDataStaticPtr();
     static auto* const PTITLE = (Hyprlang::STRING const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprwinwrap:title")->getDataStaticPtr();
-
-    static auto* const PSIZEX = (Hyprlang::STRING const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprwinwrap:size_x")->getDataStaticPtr();
-    static auto* const PSIZEY = (Hyprlang::STRING const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprwinwrap:size_y")->getDataStaticPtr();
-    static auto* const PPOSX  = (Hyprlang::STRING const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprwinwrap:pos_x")->getDataStaticPtr();
-    static auto* const PPOSY  = (Hyprlang::STRING const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprwinwrap:pos_y")->getDataStaticPtr();
 
     const std::string  classRule(*PCLASS);
     const std::string  titleRule(*PTITLE);
@@ -78,7 +76,16 @@ void onNewWindow(PHLWINDOW pWindow) {
     const bool         classMatches = !classRule.empty() && pWindow->m_initialClass == classRule;
     const bool         titleMatches = !titleRule.empty() && pWindow->m_title == titleRule;
 
-    if (!classMatches && !titleMatches)
+    return classMatches || titleMatches;
+}
+
+void onNewWindow(PHLWINDOW pWindow) {
+    static auto* const PSIZEX = (Hyprlang::STRING const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprwinwrap:size_x")->getDataStaticPtr();
+    static auto* const PSIZEY = (Hyprlang::STRING const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprwinwrap:size_y")->getDataStaticPtr();
+    static auto* const PPOSX  = (Hyprlang::STRING const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprwinwrap:pos_x")->getDataStaticPtr();
+    static auto* const PPOSY  = (Hyprlang::STRING const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprwinwrap:pos_y")->getDataStaticPtr();
+
+    if (!pWindow || isBgWindow(pWindow) || !windowMatchesConfig(pWindow))
         return;
 
     const auto PMONITOR = pWindow->m_monitor.lock();
@@ -142,6 +149,17 @@ void onCloseWindow(PHLWINDOW pWindow) {
     std::erase_if(bgWindows, [pWindow](const auto& ref) { return ref.expired() || ref.lock() == pWindow; });
     interactableStates.erase(pWindow);
     Log::logger->log(Log::INFO, "[hyprwinwrap] closed window {}", pWindow);
+}
+
+void adoptExistingWindows() {
+    cleanupExpiredWindows();
+
+    for (const auto& window : g_pCompositor->m_windows) {
+        if (!Desktop::View::validMapped(window))
+            continue;
+
+        onNewWindow(window);
+    }
 }
 
 void onRenderStage(eRenderStage stage) {
@@ -220,6 +238,8 @@ void onConfigReloaded() {
         g_pConfigManager->parseKeyword("windowrulev2", std::string{"float, title:^("} + titleRule + ")$");
         g_pConfigManager->parseKeyword("windowrulev2", std::string{"size 100\% 100\%, title:^("} + titleRule + ")$");
     }
+
+    adoptExistingWindows();
 }
 
 // Dispatchers
@@ -352,6 +372,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprwinwrap:size_y", Hyprlang::STRING{"100"});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprwinwrap:pos_x", Hyprlang::STRING{"0"});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprwinwrap:pos_y", Hyprlang::STRING{"0"});
+
+    adoptExistingWindows();
 
     HyprlandAPI::addNotification(PHANDLE, "[hyprwinwrap] Initialized successfully!", CHyprColor{0.2, 1.0, 0.2, 1.0}, 5000);
 
