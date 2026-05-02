@@ -2,6 +2,7 @@
 
 #include <unistd.h>
 #include <algorithm>
+#include <cmath>
 #include <vector>
 #include <map>
 
@@ -56,6 +57,30 @@ static bool isWindowInteractable(const PHLWINDOW& window) {
     return it != interactableStates.end() && it->second;
 }
 
+static void setWrappedFullscreenState(const PHLWINDOW& window, bool interactive) {
+    if (!window)
+        return;
+
+    window->m_fullscreenState = {
+        .internal = interactive ? FSMODE_FULLSCREEN : FSMODE_NONE,
+        .client   = FSMODE_FULLSCREEN,
+    };
+
+    if (interactive)
+        g_pXWaylandManager->setWindowFullscreen(window, true);
+}
+
+static void setWindowGeometry(const PHLWINDOW& window, const Vector2D& position, const Vector2D& size) {
+    if (!window)
+        return;
+
+    window->m_realSize->setValueAndWarp(size);
+    window->m_realPosition->setValueAndWarp(position);
+    window->m_size     = size;
+    window->m_position = position;
+    window->sendWindowSize(true);
+}
+
 static PHLWINDOW fallbackFocusWindow(const PHLWINDOW& deniedWindow) {
     PHLWINDOW fallback = nullptr;
 
@@ -96,6 +121,7 @@ static void preventKeyboardFocus(const PHLWINDOW& deniedWindow) {
 
 static void setWindowInteractable(const PHLWINDOW& window, bool interactable) {
     interactableStates[window] = interactable;
+    setWrappedFullscreenState(window, interactable);
     window->m_hidden           = !interactable;
 
     if (!interactable)
@@ -167,19 +193,17 @@ void onNewWindow(PHLWINDOW pWindow) {
         sy = 100.f - py;
     }
 
-    const Vector2D monitorSize = PMONITOR->m_size;
-    const Vector2D monitorPos  = PMONITOR->m_position;
+    const CBox     monitorBox  = PMONITOR->logicalBox();
+    const Vector2D monitorSize = monitorBox.size();
+    const Vector2D monitorPos  = monitorBox.pos();
 
-    const Vector2D newSize = {static_cast<int>(monitorSize.x * (sx / 100.f)), static_cast<int>(monitorSize.y * (sy / 100.f))};
+    const Vector2D newSize = {std::round(monitorSize.x * (sx / 100.f)), std::round(monitorSize.y * (sy / 100.f))};
 
-    const Vector2D newPos = {static_cast<int>(monitorPos.x + (monitorSize.x * (px / 100.f))), static_cast<int>(monitorPos.y + (monitorSize.y * (py / 100.f)))};
+    const Vector2D newPos = {std::round(monitorPos.x + (monitorSize.x * (px / 100.f))), std::round(monitorPos.y + (monitorSize.y * (py / 100.f)))};
 
-    pWindow->m_realSize->setValueAndWarp(newSize);
-    pWindow->m_realPosition->setValueAndWarp(newPos);
-    pWindow->m_size     = newSize;
-    pWindow->m_position = newPos;
     pWindow->m_pinned   = true;
-    pWindow->sendWindowSize(true);
+    setWindowGeometry(pWindow, newPos, newSize);
+    setWrappedFullscreenState(pWindow, false);
 
     bgWindows.push_back(pWindow);
     setWindowInteractable(pWindow, false);
@@ -222,6 +246,12 @@ void onRenderStage(eRenderStage stage) {
 
         if (bgw->m_monitor != g_pHyprOpenGL->m_renderData.pMonitor)
             continue;
+
+        const auto MON = bgw->m_monitor.lock();
+        if (MON && !isWindowInteractable(bgw)) {
+            const CBox fullMonitorBox = MON->logicalBox();
+            setWindowGeometry(bgw, fullMonitorBox.pos(), fullMonitorBox.size());
+        }
 
         // cant use setHidden cuz that sends suspended and shit too that would be laggy
         const bool wasHidden = bgw->m_hidden;
