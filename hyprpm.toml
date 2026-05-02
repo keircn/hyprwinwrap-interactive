@@ -152,7 +152,7 @@ commit_pins = [
   ], # 0.53.0
   [
     "521ece463c4a9d3d128670688a34756805a4328f",
-    "6c3c7819afdec2b7f1f832dc573047e6aa7e9ff3",
+    "d885bccb2c19ae5fe9c813032a703e26599af7fa",
   ], # 0.54.3
 ]
 
