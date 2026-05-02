@@ -38,11 +38,13 @@ typedef void (*origCommitWindow)(Desktop::View::CWindow* thisptr);
 
 inline CHyprSignalListener openWindowListener;
 inline CHyprSignalListener closeWindowListener;
+inline CHyprSignalListener activeWindowListener;
 inline CHyprSignalListener renderListener;
 inline CHyprSignalListener configReloadedListener;
 
 std::vector<PHLWINDOWREF> bgWindows;
 std::map<PHLWINDOW, bool> interactableStates;
+bool refocusingAway = false;
 
 // Helper functions
 static bool isBgWindow(const PHLWINDOW& window) {
@@ -54,9 +56,50 @@ static bool isWindowInteractable(const PHLWINDOW& window) {
     return it != interactableStates.end() && it->second;
 }
 
+static PHLWINDOW fallbackFocusWindow(const PHLWINDOW& deniedWindow) {
+    PHLWINDOW fallback = nullptr;
+
+    for (const auto& window : g_pCompositor->m_windows) {
+        if (!Desktop::View::validMapped(window) || window == deniedWindow || window->m_hidden || isBgWindow(window))
+            continue;
+
+        if (deniedWindow && window->m_monitor == deniedWindow->m_monitor && window->m_workspace == deniedWindow->m_workspace)
+            return window;
+
+        if (!fallback)
+            fallback = window;
+    }
+
+    return fallback;
+}
+
+static void preventKeyboardFocus(const PHLWINDOW& deniedWindow) {
+    if (refocusingAway || !deniedWindow || !isBgWindow(deniedWindow) || isWindowInteractable(deniedWindow))
+        return;
+
+    const auto focusedWindow = Desktop::focusState()->window();
+    if (focusedWindow != deniedWindow)
+        return;
+
+    refocusingAway = true;
+
+    if (const auto fallback = fallbackFocusWindow(deniedWindow); fallback) {
+        Desktop::focusState()->fullWindowFocus(fallback, Desktop::FOCUS_REASON_OTHER);
+    } else {
+        Desktop::focusState()->resetWindowFocus();
+        if (const auto monitor = deniedWindow->m_monitor.lock(); monitor)
+            Desktop::focusState()->rawMonitorFocus(monitor);
+    }
+
+    refocusingAway = false;
+}
+
 static void setWindowInteractable(const PHLWINDOW& window, bool interactable) {
     interactableStates[window] = interactable;
     window->m_hidden           = !interactable;
+
+    if (!interactable)
+        preventKeyboardFocus(window);
 }
 
 static void cleanupExpiredWindows() {
@@ -149,6 +192,10 @@ void onCloseWindow(PHLWINDOW pWindow) {
     std::erase_if(bgWindows, [pWindow](const auto& ref) { return ref.expired() || ref.lock() == pWindow; });
     interactableStates.erase(pWindow);
     Log::logger->log(Log::INFO, "[hyprwinwrap] closed window {}", pWindow);
+}
+
+void onActiveWindow(PHLWINDOW pWindow) {
+    preventKeyboardFocus(pWindow);
 }
 
 void adoptExistingWindows() {
@@ -335,6 +382,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // clang-format off
     openWindowListener     = Event::bus()->m_events.window.open.listen([](PHLWINDOW window) { onNewWindow(window); });
     closeWindowListener    = Event::bus()->m_events.window.close.listen([](PHLWINDOW window) { onCloseWindow(window); });
+    activeWindowListener   = Event::bus()->m_events.window.active.listen([](PHLWINDOW window, Desktop::eFocusReason reason) { onActiveWindow(window); });
     renderListener         = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) { onRenderStage(stage); });
     configReloadedListener = Event::bus()->m_events.config.reloaded.listen([]() { onConfigReloaded(); });
     // clang-format on
